@@ -89,7 +89,7 @@ if 'cpt_values' not in st.session_state:
     st.session_state.cpt_values = {}
 
 # --- HEADER ---
-st.title("Probabilistische künstliche Intelligenz")
+st.title("Probabilistische künstliche Intelligenz (XAI)")
 
 # --- 1. STRUKTUR-EDITOR (SIDEBAR) ---
 with st.sidebar:
