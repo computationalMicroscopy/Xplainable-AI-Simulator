@@ -6,7 +6,6 @@ import itertools
 st.set_page_config(page_title="Bayes-Schulungs-Simulator Pro", layout="wide")
 
 # --- INITIALISIERUNG (ROBUST) ---
-# Wir löschen den State, falls die Struktur veraltet ist, um KeyErrors zu vermeiden
 if 'nodes_config' in st.session_state:
     if not isinstance(st.session_state.nodes_config["A"], dict):
         del st.session_state.nodes_config
@@ -35,7 +34,6 @@ with st.sidebar:
     st.header("1. Netzwerk-Design")
     for n in ["A", "B", "C", "D"]:
         st.subheader(f"Knoten {n}")
-        # Namen und Zustände anpassen
         st.session_state.nodes_config[n]["name"] = st.text_input(
             f"Anzeigename für {n}", 
             st.session_state.nodes_config[n]["name"], 
@@ -156,25 +154,28 @@ with col_target:
     for qid in query_ids:
         target_vals[qid] = st.selectbox(f"Wert für {st.session_state.nodes_config[qid]['name']}", st.session_state.nodes_config[qid]["states"], key=f"tval_{qid}")
 
+# Stichprobengröße einstellbar machen
+num_samples = st.slider("Anzahl der Samples (Stichprobengröße)", 100, 20000, 5000, help="Höhere Werte erhöhen die Präzision, dauern aber länger.")
+
 if st.button("🚀 Wahrscheinlichkeit berechnen"):
-    num_samples = 5000
     valid_samples = []
     attempts = 0
-    while len(valid_samples) < num_samples and attempts < num_samples * 50:
-        attempts += 1
-        sample, to_proc, valid = {}, ["A", "B", "C", "D"], True
-        while to_proc:
-            for n in to_proc:
-                pars = [s for s, t in st.session_state.edges if t == n]
-                if all(p in sample for p in pars):
-                    stts = st.session_state.nodes_config[n]["states"]
-                    probs = [cpt_storage_for_sim[n][s] for s in stts] if not pars else [cpt_storage_for_sim[n]["lookup"][tuple(sample[p] for p in pars)][s] for s in stts]
-                    val = np.random.choice(stts, p=probs)
-                    if n in evidence and val != evidence[n]:
-                        valid = False; break
-                    sample[n] = val; to_proc.remove(n); break
-            if not valid: break
-        if valid: valid_samples.append(sample)
+    with st.spinner("Berechne Wahrscheinlichkeiten..."):
+        while len(valid_samples) < num_samples and attempts < num_samples * 100:
+            attempts += 1
+            sample, to_proc, valid = {}, ["A", "B", "C", "D"], True
+            while to_proc:
+                for n in to_proc:
+                    pars = [s for s, t in st.session_state.edges if t == n]
+                    if all(p in sample for p in pars):
+                        stts = st.session_state.nodes_config[n]["states"]
+                        probs = [cpt_storage_for_sim[n][s] for s in stts] if not pars else [cpt_storage_for_sim[n]["lookup"][tuple(sample[p] for p in pars)][s] for s in stts]
+                        val = np.random.choice(stts, p=probs)
+                        if n in evidence and val != evidence[n]:
+                            valid = False; break
+                        sample[n] = val; to_proc.remove(n); break
+                if not valid: break
+            if valid: valid_samples.append(sample)
         
     if valid_samples:
         df_res = pd.DataFrame(valid_samples)
@@ -184,13 +185,15 @@ if st.button("🚀 Wahrscheinlichkeit berechnen"):
         if query_ids:
             mask = True
             for k, v in target_vals.items(): mask &= (df_res[k] == v)
-            st.metric(f"P({t_str} | {e_str if e_str else '∅'})", f"{mask.mean():.2%}")
+            st.metric(f"Berechneter Ausdruck: P({t_str} | {e_str if e_str else '∅'})", f"{mask.mean():.2%}")
+            st.info(f"Basierend auf {len(valid_samples)} validen Stichproben.")
         
-        st.subheader("Einzel-Marginale")
+        st.subheader("Einzel-Marginale (Bedingte Verteilungen)")
         res_cols = st.columns(4)
         for i, n in enumerate(["A", "B", "C", "D"]):
             with res_cols[i]:
                 st.write(f"**{st.session_state.nodes_config[n]['name']}**")
-                st.bar_chart(df_res[n].value_counts(normalize=True))
+                dist = df_res[n].value_counts(normalize=True).sort_index()
+                st.bar_chart(dist)
     else:
-        st.error("Bedingung ist zu unwahrscheinlich für Sampling.")
+        st.error("Bedingung ist zu unwahrscheinlich für die gewählte Sample-Anzahl. Erhöhe ggf. die Samples oder ändere die Evidenz.")
