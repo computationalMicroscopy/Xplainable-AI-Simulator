@@ -20,7 +20,6 @@ if 'nodes_config' not in st.session_state:
 if 'edges' not in st.session_state:
     st.session_state.edges = []
 
-# Dynamische Erstellung der One-Hot Spaltennamen für die Trainingsdaten
 def get_one_hot_columns():
     cols = []
     for nid in ["A", "B", "C", "D"]:
@@ -30,9 +29,7 @@ def get_one_hot_columns():
     return cols
 
 if 'training_data' not in st.session_state:
-    cols = get_one_hot_columns()
-    # Initialisiere mit einer Beispielzeile (Sonne, Sprinkler Aus, Rasen Trocken, Stimmung Gut)
-    st.session_state.training_data = pd.DataFrame(columns=cols)
+    st.session_state.training_data = pd.DataFrame(columns=get_one_hot_columns())
 
 if 'cpt_values' not in st.session_state:
     st.session_state.cpt_values = {}
@@ -51,16 +48,14 @@ with st.sidebar:
         )
         
         states_str = st.text_input(
-            f"Zustände (kommasepariert) für {st.session_state.nodes_config[n]['name']}", 
+            f"Zustände für {st.session_state.nodes_config[n]['name']}", 
             ",".join(st.session_state.nodes_config[n]["states"]), 
             key=f"states_input_{n}"
         )
         new_states = [s.strip() for s in states_str.split(",") if s.strip()]
         if new_states != st.session_state.nodes_config[n]["states"]:
             st.session_state.nodes_config[n]["states"] = new_states
-            # Bei Zustandsänderung muss die Datentabelle angepasst werden
-            new_cols = get_one_hot_columns()
-            st.session_state.training_data = pd.DataFrame(columns=new_cols)
+            st.session_state.training_data = pd.DataFrame(columns=get_one_hot_columns())
             st.session_state.cpt_values = {}
 
     st.divider()
@@ -79,11 +74,10 @@ with st.sidebar:
         st.session_state.cpt_values = {}
         st.rerun()
 
-# --- 2. TRAININGSDATEN (FULL ONE-HOT) ---
-st.header("2. Trainingsdaten (One-Hot pro Ausprägung)")
-st.markdown("Setze eine **1** in der Spalte der zutreffenden Ausprägung pro Zeile.")
+# --- 2. TRAININGSDATEN ---
+st.header("2. Trainingsdaten (One-Hot)")
+st.markdown("Pro Knoten darf in jeder Zeile nur bei **einer** Ausprägung eine 1 stehen.")
 
-# Sicherstellen, dass die Spalten aktuell sind
 current_cols = get_one_hot_columns()
 if list(st.session_state.training_data.columns) != current_cols:
      st.session_state.training_data = pd.DataFrame(columns=current_cols)
@@ -101,18 +95,20 @@ for s, t in st.session_state.edges:
 dot += "}"
 st.graphviz_chart(dot)
 
+
+
 # --- 3. TRAINING & CPTs ---
 st.header("3. Wahrscheinlichkeitstabellen (CPTs)")
 
+def get_category_series(df, nid):
+    states = st.session_state.nodes_config[nid]["states"]
+    cols = [f"{nid}_{s}" for s in states]
+    if df[cols].sum(axis=1).all():
+        return df[cols].idxmax(axis=1).str.replace(f"{nid}_", "", regex=False)
+    return pd.Series([None] * len(df))
+
 if st.button("🎯 Aus One-Hot Daten lernen"):
     new_cpts = {}
-    # Hilfsfunktion um aus One-Hot wieder Kategorien für die Berechnung zu machen
-    def get_category_series(df, nid):
-        states = st.session_state.nodes_config[nid]["states"]
-        cols = [f"{nid}_{s}" for s in states]
-        # Finde die Spalte mit der 1 pro Zeile
-        return df[cols].idxmax(axis=1).str.replace(f"{nid}_", "")
-
     for n in ["A", "B", "C", "D"]:
         parents = [s for s, t in st.session_state.edges if t == n]
         states = st.session_state.nodes_config[n]["states"]
@@ -122,18 +118,17 @@ if st.button("🎯 Aus One-Hot Daten lernen"):
                 cat_series = get_category_series(trained_df, n)
                 counts = cat_series.value_counts(normalize=True).to_dict()
                 vals = [counts.get(s, 1/len(states)) * 100 for s in states]
+                new_cpts[n] = pd.DataFrame([vals], columns=states, index=["Basis (%)"])
             else:
-                vals = [100/len(states)] * len(states)
-            new_cpts[n] = pd.DataFrame([vals], columns=states, index=["Basis (%)"])
+                new_cpts[n] = pd.DataFrame([[100/len(states)]*len(states)], columns=states, index=["Basis (%)"])
         else:
             p_states_list = [st.session_state.nodes_config[p]["states"] for p in parents]
             combinations = list(itertools.product(*p_states_list))
             row_labels = [" | ".join(map(str, combo)) for combo in combinations]
             
-            df_cpt = pd.DataFrame(0.0, index=row_labels, columns=states)
+            df_cpt = pd.DataFrame(np.full((len(row_labels), len(states)), 100/len(states)), index=row_labels, columns=states)
             
             if len(trained_df) > 0:
-                # Erstelle temporäres DF mit Kategorien statt One-Hot für einfacheres GroupBy
                 calc_df = pd.DataFrame()
                 calc_df[n] = get_category_series(trained_df, n)
                 for p in parents:
@@ -148,10 +143,6 @@ if st.button("🎯 Aus One-Hot Daten lernen"):
                         dist = subset[n].value_counts(normalize=True).to_dict()
                         for s_name in states:
                             df_cpt.loc[row_labels[i], s_name] = dist.get(s_name, 0.0) * 100
-                    else:
-                        df_cpt.iloc[i] = 100 / len(states)
-            else:
-                df_cpt[:] = 100 / len(states)
             new_cpts[n] = df_cpt
     st.session_state.cpt_values = new_cpts
     st.rerun()
@@ -165,7 +156,8 @@ for n in ["A", "B", "C", "D"]:
     row_labels = [" | ".join(map(str, combo)) for combo in p_combs] if parents else ["Basis (%)"]
     
     if n not in st.session_state.cpt_values or len(st.session_state.cpt_values[n]) != len(row_labels):
-        st.session_state.cpt_values[n] = pd.DataFrame(100/len(cfg["states"]), index=row_labels, columns=cfg["states"])
+        init_data = np.full((len(row_labels), len(cfg["states"])), 100/len(cfg["states"]))
+        st.session_state.cpt_values[n] = pd.DataFrame(init_data, index=row_labels, columns=cfg["states"])
 
     st.write(f"### CPT: {cfg['name']}")
     edited_cpt = st.data_editor(st.session_state.cpt_values[n], key=f"editor_{n}")
@@ -236,4 +228,4 @@ if st.button("🚀 Wahrscheinlichkeit berechnen"):
                 dist = df_res[n].value_counts(normalize=True).sort_index()
                 st.bar_chart(dist)
     else:
-        st.error("Bedingung ist zu unwahrscheinlich.")
+        st.error("Bedingung ist zu unwahrscheinlich für das Sampling.")
