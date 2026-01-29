@@ -111,15 +111,36 @@ with st.sidebar:
 
     with st.expander("🔗 Kausalpfade", expanded=True):
         node_opts = {n: st.session_state.nodes_config[n]["name"] for n in ["A", "B", "C", "D"]}
-        src_id = st.selectbox("Ursache", options=list(node_opts.keys()), format_func=lambda x: node_opts[x])
-        tgt_id = st.selectbox("Wirkung", options=[n for n in node_opts.keys() if n != src_id], format_func=lambda x: node_opts[x])
+        
+        # Verbindung hinzufügen
+        st.markdown("### Pfad hinzufügen")
+        src_id = st.selectbox("Ursache", options=list(node_opts.keys()), format_func=lambda x: node_opts[x], key="add_src")
+        tgt_id = st.selectbox("Wirkung", options=[n for n in node_opts.keys() if n != src_id], format_func=lambda x: node_opts[x], key="add_tgt")
         
         if st.button("Pfad hinzufügen +"):
             if (src_id, tgt_id) not in st.session_state.edges:
                 st.session_state.edges.append((src_id, tgt_id))
                 st.session_state.cpt_values = {} 
                 st.rerun()
-        if st.button("Reset Structure", type="secondary"):
+        
+        st.divider()
+        
+        # Verbindung entfernen
+        st.markdown("### Pfad entfernen")
+        if st.session_state.edges:
+            edge_to_del = st.selectbox(
+                "Wähle Pfad zum Löschen", 
+                options=st.session_state.edges, 
+                format_func=lambda x: f"{node_opts[x[0]]} → {node_opts[x[1]]}"
+            )
+            if st.button("Ausgewählten Pfad entfernen 🗑️"):
+                st.session_state.edges.remove(edge_to_del)
+                st.session_state.cpt_values = {}
+                st.rerun()
+        else:
+            st.info("Keine Pfade vorhanden.")
+
+        if st.button("Struktur komplett zurücksetzen", type="secondary"):
             st.session_state.edges = []
             st.session_state.cpt_values = {}
             st.rerun()
@@ -143,8 +164,6 @@ if st.session_state.edges:
             st.code(f"{st.session_state.nodes_config[s]['name']} ➔ {st.session_state.nodes_config[t]['name']}")
 else:
     st.info("Noch keine Kausalpfade definiert.")
-
-
 
 st.divider()
 
