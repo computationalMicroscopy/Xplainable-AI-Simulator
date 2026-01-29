@@ -9,31 +9,34 @@ st.set_page_config(page_title="Bayes Expert Pro | Enterprise Edition", layout="w
 # --- HIGH-CONTRAST PROFESSIONAL DESIGN (DARK MODE OPTIMIZED) ---
 st.markdown("""
     <style>
-    /* Haupt-Hintergrund und Textfarben */
+    /* Haupt-Hintergrund */
     .stApp {
         background-color: #0e1117;
         color: #ffffff;
     }
     
-    /* Karten-Design für Sektionen */
-    div.stBlock {
+    /* Tabellen-Optimierung: Verhindert ungewollte Zeilenumbrüche und sorgt für Gänze */
+    div[data-testid="stTable"] {
+        width: 100% !important;
+    }
+    
+    /* Container für Sektionen */
+    .st-emotion-cache-12w0qpk {
         background-color: #1a1c24;
         border: 1px solid #30363d;
         border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 20px;
+        padding: 1.5rem;
     }
 
-    /* Metriken (Ergebnisse) hervorheben */
+    /* Metriken */
     div[data-testid="stMetric"] {
         background-color: #1f2937;
         border: 2px solid #3b82f6;
         border-radius: 12px;
         padding: 15px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     
-    /* Buttons: High Contrast Blue */
+    /* Buttons */
     .stButton>button {
         width: 100%;
         border-radius: 6px;
@@ -42,35 +45,21 @@ st.markdown("""
         color: white;
         font-weight: bold;
         border: none;
-        transition: all 0.3s;
     }
     .stButton>button:hover {
         background-color: #3b82f6;
         border: 1px solid #ffffff;
     }
 
-    /* Sidebar-Styling */
-    section[data-testid="stSidebar"] {
-        background-color: #161b22;
-        border-right: 1px solid #30363d;
-    }
-
     /* Überschriften */
     h1, h2, h3 {
-        color: #3b82f6;
-        font-family: 'Segoe UI', Roboto, sans-serif;
-        letter-spacing: -0.5px;
-    }
-
-    /* Trennlinien */
-    hr {
-        border: 0;
-        border-top: 1px solid #30363d;
+        color: #3b82f6 !important;
+        font-family: 'Segoe UI', sans-serif;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- INITIALISIERUNG (ROBUST) ---
+# --- INITIALISIERUNG ---
 if 'nodes_config' in st.session_state:
     if not isinstance(st.session_state.nodes_config["A"], dict):
         del st.session_state.nodes_config
@@ -101,7 +90,6 @@ if 'cpt_values' not in st.session_state:
 
 # --- HEADER ---
 st.title("🛡️ Bayes Expert Pro | Enterprise Edition")
-st.markdown("<p style='color: #8b949e;'>Professionelle Kausal-Analyse & Soft-Data Training</p>", unsafe_allow_html=True)
 
 # --- 1. STRUKTUR-EDITOR (SIDEBAR) ---
 with st.sidebar:
@@ -136,31 +124,29 @@ with st.sidebar:
             st.session_state.cpt_values = {}
             st.rerun()
 
-# --- HAUPTBEREICH ---
-col_main_left, col_main_right = st.columns([1, 1])
-
-with col_main_left:
-    st.subheader("📥 2. Dateneingabe (Soft-Weights)")
-    current_cols = get_one_hot_columns()
-    if list(st.session_state.training_data.columns) != current_cols:
-         st.session_state.training_data = pd.DataFrame(columns=current_cols)
-    
-    trained_df = st.data_editor(st.session_state.training_data, num_rows="dynamic", use_container_width=True)
-    st.session_state.training_data = trained_df
-
-with col_main_right:
-    st.subheader("🕸️ Kausalgraph")
-    # Der Graph-Code wurde hier explizit eingefügt
-    dot = "digraph { rankdir=LR; bgcolor='transparent'; node [style=filled, fillcolor='#1f2937', color='#3b82f6', fontcolor='#ffffff', shape=box, fontname='Arial', fontsize=12]; edge [color='#8b949e', penwidth=2]; "
-    for nid, cfg in st.session_state.nodes_config.items():
-        dot += f'{nid} [label="{cfg["name"]}\\n({"/".join(cfg["states"])})"]; '
-    for s, t in st.session_state.edges:
-        dot += f"{s} -> {t}; "
-    dot += "}"
-    # Zeichnet das Diagramm
-    st.graphviz_chart(dot)
+# --- 2. GRAPH & DATEN ---
+# Graph oben platzieren für maximale Sichtbarkeit
+st.subheader("🕸️ Aktueller Kausalgraph")
+dot = "digraph { rankdir=LR; bgcolor='transparent'; node [style=filled, fillcolor='#1f2937', color='#3b82f6', fontcolor='#ffffff', shape=box, fontname='Arial', fontsize=12]; edge [color='#8b949e', penwidth=2]; "
+for nid, cfg in st.session_state.nodes_config.items():
+    dot += f'{nid} [label="{cfg["name"]}\\n({"/".join(cfg["states"])})"]; '
+for s, t in st.session_state.edges:
+    dot += f"{s} -> {t}; "
+dot += "}"
+st.graphviz_chart(dot, use_container_width=True)
 
 
+
+st.divider()
+
+st.subheader("📥 2. Dateneingabe (Trainingstabelle)")
+current_cols = get_one_hot_columns()
+if list(st.session_state.training_data.columns) != current_cols:
+     st.session_state.training_data = pd.DataFrame(columns=current_cols)
+
+# Hier stellen wir sicher, dass die Tabelle die gesamte Breite nutzt
+trained_df = st.data_editor(st.session_state.training_data, num_rows="dynamic", use_container_width=True)
+st.session_state.training_data = trained_df
 
 # --- 3. TRAINING & CPTs ---
 st.divider()
@@ -244,7 +230,7 @@ num_samples = st.select_slider("Stichproben-Präzision", options=[100, 1000, 500
 if st.button("INFERENZ STARTEN ⚡"):
     valid_samples = []
     attempts = 0
-    with st.spinner("Monte Carlo Simulation läuft..."):
+    with st.spinner("Simulation läuft..."):
         while len(valid_samples) < num_samples and attempts < num_samples * 100:
             attempts += 1
             sample, to_proc, valid = {}, ["A", "B", "C", "D"], True
@@ -269,7 +255,7 @@ if st.button("INFERENZ STARTEN ⚡"):
         if query_ids:
             mask = True
             for k, v in target_vals.items(): mask &= (df_res[k] == v)
-            st.metric(label=f"Wahrscheinlichkeit: P({t_str} | {e_str if e_str else '∅'})", value=f"{mask.mean():.2%}")
+            st.metric(label=f"P({t_str} | {e_str if e_str else '∅'})", value=f"{mask.mean():.2%}")
         
         st.divider()
         st.markdown("### 📊 Verteilungen unter der Bedingung")
@@ -280,4 +266,4 @@ if st.button("INFERENZ STARTEN ⚡"):
                 dist = df_res[n].value_counts(normalize=True).sort_index()
                 st.bar_chart(dist, color="#3b82f6")
     else:
-        st.error("Konfiguration ungültig: Die Bedingung ist in diesem Modell unmöglich.")
+        st.error("Bedingung mathematisch unmöglich.")
