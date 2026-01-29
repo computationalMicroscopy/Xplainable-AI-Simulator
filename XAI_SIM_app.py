@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import itertools
 
-st.set_page_config(page_title="Bayes-Schulungs-Simulator", layout="wide")
+st.set_page_config(page_title="Bayes-Schulungs-Simulator Pro", layout="wide")
 
 # --- INITIALISIERUNG ---
 if 'nodes_config' not in st.session_state:
@@ -16,6 +16,7 @@ if 'nodes_config' not in st.session_state:
 if 'edges' not in st.session_state:
     st.session_state.edges = []
 if 'training_data' not in st.session_state:
+    # Start-Daten mit 0 und 1 für One-Hot Logik (Index-basiert)
     st.session_state.training_data = pd.DataFrame(
         [[1, 1, 0, 0], [1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 1], [1, 1, 1, 1]], 
         columns=["A", "B", "C", "D"]
@@ -23,7 +24,7 @@ if 'training_data' not in st.session_state:
 if 'cpt_values' not in st.session_state:
     st.session_state.cpt_values = {}
 
-st.title("🎓 Bayes-Netz: Training & Bedingte Inferenz")
+st.title("🎓 Bayes-Netz: Training & Beliebige bedingte Inferenz")
 
 # --- 1. STRUKTUR-EDITOR (SIDEBAR) ---
 with st.sidebar:
@@ -43,11 +44,11 @@ with st.sidebar:
 
 # --- 2. TRAININGSDATEN (ONE-HOT) ---
 st.header("2. Trainingsdaten (One-Hot)")
-st.markdown("Nutze 0 für den 1. Zustand, 1 für den 2. Zustand usw.")
+st.markdown("Nutze 0 für den 1. Zustand, 1 für den 2. Zustand usw. gemäß deiner Definition oben.")
 trained_df = st.data_editor(st.session_state.training_data, num_rows="dynamic", use_container_width=True)
 
 # Graph zur Visualisierung
-dot = "digraph { rankdir=LR; node [style=filled, fillcolor='#E1F5FE', shape=box]; "
+dot = "digraph { rankdir=LR; node [style=filled, fillcolor='#E1F5FE', shape=box, fontname='Arial']; "
 for n in st.session_state.nodes_config:
     dot += f'{n}; '
 for s, t in st.session_state.edges:
@@ -88,17 +89,15 @@ if st.button("🎯 Wahrscheinlichkeiten aus Daten lernen"):
                     df_cpt.iloc[i] = 100 / len(states)
             new_cpts[n] = df_cpt
     st.session_state.cpt_values = new_cpts
-    st.success("Erfolgreich trainiert!")
+    st.success("Training abgeschlossen!")
 
 # Anzeige und manuelles Editieren der CPTs
 cpt_storage_for_sim = {}
 for n in st.session_state.nodes_config.keys():
     parents = [s for s, t in st.session_state.edges if t == n]
     states = st.session_state.nodes_config[n]
-    
     st.write(f"### CPT für {n}")
     
-    # Default Werte falls noch nicht trainiert
     if n not in st.session_state.cpt_values:
         if not parents:
             df_init = pd.DataFrame([[100/len(states)] * len(states)], columns=states, index=["Basiswahrscheinlichkeit (%)"])
@@ -110,49 +109,48 @@ for n in st.session_state.nodes_config.keys():
 
     edited_cpt = st.data_editor(st.session_state.cpt_values[n], key=f"editor_{n}")
     
-    # Für Simulation aufbereiten
+    # Normalisierung für Simulation
     normalized = edited_cpt.div(edited_cpt.sum(axis=1), axis=0).fillna(1/len(states))
     if not parents:
         cpt_storage_for_sim[n] = normalized.iloc[0].to_dict()
     else:
-        parent_states = [st.session_state.nodes_config[p] for p in parents]
-        combinations = list(itertools.product(*parent_states))
+        p_combs = list(itertools.product(*[st.session_state.nodes_config[p] for p in parents]))
         cpt_storage_for_sim[n] = {
             "parents": parents, 
-            "lookup": {comb: normalized.iloc[i].to_dict() for i, comb in enumerate(combinations)}
+            "lookup": {comb: normalized.iloc[i].to_dict() for i, comb in enumerate(p_combs)}
         }
 
 # --- 4. BEDINGTE INFERENZ & FORWARD SAMPLING ---
 st.divider()
-st.header("4. Inferenz: Bedingte Wahrscheinlichkeiten")
-st.markdown("Setze Bedingungen fest, um bedingte Verteilungen zu berechnen (z.B. $P(Knoten | Evidenz)$).")
+st.header("4. Inferenz: Beliebige bedingte Wahrscheinlichkeiten")
+st.markdown("Setze Bedingungen fest (Evidenz). Das Modell berechnet die Wahrscheinlichkeiten für alle anderen Knoten unter dieser Bedingung.")
 
 evidence = {}
 ev_cols = st.columns(len(st.session_state.nodes_config))
 for i, n in enumerate(st.session_state.nodes_config.keys()):
     with ev_cols[i]:
         options = ["Keine"] + st.session_state.nodes_config[n]
-        sel = st.selectbox(f"Evidenz für {n}", options, key=f"ev_{n}")
+        sel = st.selectbox(f"Bedingung für {n}", options, key=f"ev_{n}")
         if sel != "Keine":
             evidence[n] = sel
 
-num_samples = st.slider("Anzahl Samples", 500, 10000, 2000)
+num_samples = st.slider("Stichprobengröße (Samples)", 500, 10000, 2000)
 
-if st.button("🚀 Bedingte Inferenz berechnen"):
+if st.button("🚀 Bedingte Wahrscheinlichkeiten berechnen"):
     all_nodes = list(st.session_state.nodes_config.keys())
     valid_samples = []
     attempts = 0
-    max_attempts = num_samples * 10 # Sicherheitsstopp bei seltener Evidenz
+    max_attempts = num_samples * 20 
     
-    with st.status("Simuliere...") as status:
+    with st.spinner("Führe Rejection Sampling durch..."):
         while len(valid_samples) < num_samples and attempts < max_attempts:
             attempts += 1
             current_sample = {}
-            to_process = all_nodes.copy()
+            nodes_to_process = all_nodes.copy()
             is_valid = True
             
-            while to_process:
-                for n in to_process:
+            while nodes_to_process:
+                for n in nodes_to_process:
                     parents = [s for s, t in st.session_state.edges if t == n]
                     if all(p in current_sample for p in parents):
                         states = st.session_state.nodes_config[n]
@@ -164,34 +162,38 @@ if st.button("🚀 Bedingte Inferenz berechnen"):
                         
                         sampled_val = np.random.choice(states, p=probs)
                         
-                        # Evidenz-Check (Rejection Sampling)
                         if n in evidence and sampled_val != evidence[n]:
                             is_valid = False
                             break
                         
                         current_sample[n] = sampled_val
-                        to_process.remove(n)
+                        nodes_to_process.remove(n)
                         break
                 if not is_valid: break
-            
             if is_valid:
                 valid_samples.append(current_sample)
         
-        if len(valid_samples) < num_samples:
-            st.warning(f"Nur {len(valid_samples)} Samples gefunden, die der Evidenz entsprechen.")
-        status.update(label="Simulation abgeschlossen!", state="complete")
-
     if valid_samples:
         res_df = pd.DataFrame(valid_samples)
-        st.subheader("Bedingte Verteilungen")
-        cols = st.columns(len(all_nodes))
+        st.success(f"Simulation abgeschlossen. {len(valid_samples)} passende Samples gefunden (Effizienz: {len(valid_samples)/attempts:.1%}).")
+        
+        st.subheader("Bedingte Einzelwahrscheinlichkeiten")
+        res_cols = st.columns(len(all_nodes))
         for i, n in enumerate(all_nodes):
-            with cols[i]:
+            with res_cols[i]:
                 st.write(f"**P({n} | Evidenz)**")
                 dist = res_df[n].value_counts(normalize=True).sort_index()
                 st.bar_chart(dist)
+                st.table(dist.to_frame("Wahrscheinlichkeit"))
+
+        st.subheader("Gemeinsame Wahrscheinlichkeit der nicht-gesetzten Knoten")
+        remaining_nodes = [n for n in all_nodes if n not in evidence]
+        if remaining_nodes:
+            joint_dist = res_df.groupby(remaining_nodes).size() / len(res_df)
+            st.write(f"Kombinierte Verteilung für {', '.join(remaining_nodes)}:")
+            st.dataframe(joint_dist.to_frame("P(Kombination | Evidenz)").style.format("{:.2%}"))
     else:
-        st.error("Keine Samples gefunden! Die gewählte Evidenz ist laut Modell unmöglich oder extrem unwahrscheinlich.")
+        st.error("Keine Samples gefunden! Die Bedingung ist extrem unwahrscheinlich oder unmöglich.")
 
 st.sidebar.markdown("---")
-st.sidebar.info("Schulungs-Hinweis: Das 'Lernen' befüllt die CPTs basierend auf den relativen Häufigkeiten der 0/1-Werte in der Tabelle.")
+st.sidebar.info("Schulungs-Tipp: Erhöhe die Anzahl der Samples, wenn du viele Bedingungen (Evidenz) gleichzeitig setzt, um stabilere Ergebnisse zu erhalten.")
