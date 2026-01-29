@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import itertools
 
 st.set_page_config(page_title="Bayes-Expert-Simulator", layout="wide")
 
@@ -21,38 +22,36 @@ st.title("🧠 Bayes-Netzwerk Experte & Simulator")
 with st.sidebar:
     st.header("1. Konfiguration")
     
-    # Knoten-Zustände definieren
     st.subheader("Zustände bearbeiten")
-    for n in st.session_state.nodes_config.keys():
-        states_str = st.text_input(f"Zustände für {n} (Komma-getrennt)", 
-                                   value=",".join(st.session_state.nodes_config[n]))
+    for n in list(st.session_state.nodes_config.keys()):
+        states_str = st.text_input(f"Zustände für {n}", 
+                                   value=",".join(st.session_state.nodes_config[n]),
+                                   key=f"input_{n}")
         st.session_state.nodes_config[n] = [s.strip() for s in states_str.split(",")]
 
-    st.subheader("Struktur (Drag & Drop Ersatz)")
+    st.subheader("Struktur")
     src = st.selectbox("Ursache", list(st.session_state.nodes_config.keys()))
     tgt = st.selectbox("Wirkung", [n for n in st.session_state.nodes_config.keys() if n != src])
     if st.button("Verbindung hinzufügen ➕"):
         if (src, tgt) not in st.session_state.edges:
             st.session_state.edges.append((src, tgt))
-    if st.button("Reset 🗑️"):
+    if st.button("Kanten löschen 🗑️"):
         st.session_state.edges = []
+        st.rerun()
 
 # --- 2. GRAPH-VISUALISIERUNG ---
-col_graph, col_data = st.columns([1, 1])
+st.header("Netzwerk-Graph")
+dot = "digraph { rankdir=LR; node [style=filled, fillcolor='#E1F5FE', shape=box, fontname='Arial']; "
+for n, states in st.session_state.nodes_config.items():
+    dot += f'{n} [label="{n}\\n({"/".join(states)})"]; '
+for s, t in st.session_state.edges:
+    dot += f"{s} -> {t}; "
+dot += "}"
+st.graphviz_chart(dot)
 
-with col_graph:
-    st.subheader("Netzwerk-Graph")
-    dot = "digraph { rankdir=LR; node [style=filled, fillcolor='#E1F5FE', shape=ellipse]; "
-    for n in st.session_state.nodes_config.keys():
-        dot += f'{n} [label="{n}\\n({"/".join(st.session_state.nodes_config[n])})"]; '
-    for s, t in st.session_state.edges:
-        dot += f"{s} -> {t}; "
-    dot += "}"
-    st.graphviz_chart(dot)
-
-# --- 3. DIE CPTs (DAS HERZSTÜCK) ---
+# --- 3. DIE CPTs ---
 st.header("2. Bedingte Wahrscheinlichkeitstabellen (CPTs)")
-st.info("Hier kannst du die Wahrscheinlichkeiten für jeden Zustand direkt eingeben.")
+st.info("Trage Wahrscheinlichkeiten ein (Werte werden pro Zeile automatisch auf 100% normalisiert).")
 
 cpt_data = {}
 
@@ -60,69 +59,79 @@ for n in st.session_state.nodes_config.keys():
     parents = [s for s, t in st.session_state.edges if t == n]
     st.write(f"### Tabelle für Knoten: {n}")
     
+    states = st.session_state.nodes_config[n]
+    
     if not parents:
-        # Prior Tabelle
-        df_prior = pd.DataFrame([1/len(st.session_state.nodes_config[n])] * len(st.session_state.nodes_config[n]), 
-                                index=st.session_state.nodes_config[n], columns=["Wahrscheinlichkeit"])
-        edited = st.data_editor(df_prior.T, key=f"cpt_{n}")
-        cpt_data[n] = edited.iloc[0].to_dict()
+        # Wurzelknoten: Einfache Zeile
+        df_prior = pd.DataFrame([[100/len(states)] * len(states)], columns=states, index=["Basiswahrscheinlichkeit (%)"])
+        edited = st.data_editor(df_prior, key=f"editor_{n}")
+        # Normalisierung
+        row_sum = edited.iloc[0].sum()
+        cpt_data[n] = (edited.iloc[0] / row_sum).to_dict() if row_sum > 0 else {s: 1/len(states) for s in states}
     else:
-        # Bedingte Tabelle erstellen
-        import itertools
+        # Bedingte Tabelle: MultiIndex fixen durch String-Kombination
         parent_states = [st.session_state.nodes_config[p] for p in parents]
         combinations = list(itertools.product(*parent_states))
         
-        index_names = parents
-        prob_cols = st.session_state.nodes_config[n]
+        # Erzeuge lesbare Zeilenbeschriftungen: "Zustand_P1, Zustand_P2"
+        row_labels = [" | ".join(map(str, combo)) for combo in combinations]
         
         df_cond = pd.DataFrame(
-            1/len(prob_cols), 
-            index=pd.MultiIndex.from_tuples(combinations, names=index_names),
-            columns=prob_cols
+            100/len(states), 
+            index=row_labels,
+            columns=states
         )
-        edited = st.data_editor(df_cond, key=f"cpt_{n}")
-        cpt_data[n] = edited
+        df_cond.index.name = "Eltern-Zustände (" + " & ".join(parents) + ")"
+        
+        edited = st.data_editor(df_cond, key=f"editor_{n}")
+        
+        # Zurück-Mapping für das Sampling
+        normalized_df = edited.div(edited.sum(axis=1), axis=0).fillna(1/len(states))
+        # Wir speichern das Mapping von der Kombinations-Tuple zur Wahrscheinlichkeitsverteilung
+        cpt_dict = {}
+        for i, combo in enumerate(combinations):
+            cpt_dict[combo] = normalized_df.iloc[i].to_dict()
+        cpt_data[n] = {"type": "conditional", "parents": parents, "lookup": cpt_dict}
 
-# --- 4. FORWARD SAMPLING (INFERENZ) ---
+# --- 4. FORWARD SAMPLING ---
 st.divider()
-st.header("3. Forward Sampling Simulation")
-num_samples = st.number_input("Anzahl der Simulationen", 100, 10000, 1000)
+st.header("3. Inferenz via Forward Sampling")
+num_samples = st.slider("Samples", 100, 5000, 1000)
 
 if st.button("🚀 Simulation starten"):
     results = []
     
+    # Topologische Sortierung (simpel für kleine Graphen)
+    all_nodes = list(st.session_state.nodes_config.keys())
+    
     for _ in range(num_samples):
         sample = {}
-        processed = set()
+        remaining = all_nodes.copy()
         
-        while len(processed) < len(st.session_state.nodes_config):
-            for n in st.session_state.nodes_config.keys():
-                if n in processed: continue
-                
+        while remaining:
+            for n in remaining:
                 parents = [s for s, t in st.session_state.edges if t == n]
-                if all(p in processed for p in parents):
+                if all(p in sample for p in parents):
                     states = st.session_state.nodes_config[n]
                     
                     if not parents:
-                        probs = [cpt_data[n][s] for s in states]
+                        probs_dict = cpt_data[n]
                     else:
                         p_vals = tuple(sample[p] for p in parents)
-                        # MultiIndex Zugriff
-                        row = cpt_data[n].loc[p_vals if len(parents) > 1 else p_vals[0]]
-                        probs = [row[s] for s in states]
+                        probs_dict = cpt_data[n]["lookup"][p_vals]
                     
-                    # Normalisieren falls User-Eingabe nicht 1 ergibt
-                    probs = np.array(probs) / np.sum(probs)
-                    sample[n] = np.random.choice(states, p=probs)
-                    processed.add(n)
+                    p_list = [probs_dict[s] for s in states]
+                    sample[n] = np.random.choice(states, p=p_list)
+                    remaining.remove(n)
+                    break
         results.append(sample)
     
     res_df = pd.DataFrame(results)
-    st.subheader("Ergebnis der Verteilung")
     
-    for n in st.session_state.nodes_config.keys():
-        st.write(f"**Verteilung {n}:**")
-        st.bar_chart(res_df[n].value_counts(normalize=True))
-
-st.sidebar.markdown("---")
-st.sidebar.help("Tipp: Wenn du die CPTs änderst, achte darauf, dass die Summe pro Zeile 1.0 ergeben sollte. Das Tool normalisiert aber automatisch nach.")
+    # Visualisierung der Ergebnisse
+    cols = st.columns(len(all_nodes))
+    for i, n in enumerate(all_nodes):
+        with cols[i]:
+            st.write(f"**Ergebnis {n}**")
+            counts = res_df[n].value_counts(normalize=True)
+            st.bar_chart(counts)
