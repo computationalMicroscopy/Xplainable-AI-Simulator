@@ -125,7 +125,6 @@ with st.sidebar:
             st.rerun()
 
 # --- 2. GRAPH & DATEN ---
-# Graph oben platzieren für maximale Sichtbarkeit
 st.subheader("🕸️ Aktueller Kausalgraph")
 dot = "digraph { rankdir=LR; bgcolor='transparent'; node [style=filled, fillcolor='#1f2937', color='#3b82f6', fontcolor='#ffffff', shape=box, fontname='Arial', fontsize=12]; edge [color='#8b949e', penwidth=2]; "
 for nid, cfg in st.session_state.nodes_config.items():
@@ -134,6 +133,16 @@ for s, t in st.session_state.edges:
     dot += f"{s} -> {t}; "
 dot += "}"
 st.graphviz_chart(dot, use_container_width=True)
+
+# VEREINFACHTE DARSTELLUNG
+st.markdown("#### 📍 Struktur-Logik")
+if st.session_state.edges:
+    flow_cols = st.columns(len(st.session_state.edges))
+    for i, (s, t) in enumerate(st.session_state.edges):
+        with flow_cols[i]:
+            st.code(f"{st.session_state.nodes_config[s]['name']} ➔ {st.session_state.nodes_config[t]['name']}")
+else:
+    st.info("Noch keine Kausalpfade definiert.")
 
 
 
@@ -144,7 +153,6 @@ current_cols = get_one_hot_columns()
 if list(st.session_state.training_data.columns) != current_cols:
      st.session_state.training_data = pd.DataFrame(columns=current_cols)
 
-# Hier stellen wir sicher, dass die Tabelle die gesamte Breite nutzt
 trained_df = st.data_editor(st.session_state.training_data, num_rows="dynamic", use_container_width=True)
 st.session_state.training_data = trained_df
 
