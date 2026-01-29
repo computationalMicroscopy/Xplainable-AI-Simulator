@@ -145,19 +145,19 @@ with col_main_left:
     if list(st.session_state.training_data.columns) != current_cols:
          st.session_state.training_data = pd.DataFrame(columns=current_cols)
     
-    # Editor in Dark-Optik (Streamlit steuert dies automatisch über Theme)
     trained_df = st.data_editor(st.session_state.training_data, num_rows="dynamic", use_container_width=True)
     st.session_state.training_data = trained_df
 
 with col_main_right:
     st.subheader("🕸️ Kausalgraph")
-    # High-Contrast Graphviz Style
+    # Der Graph-Code wurde hier explizit eingefügt
     dot = "digraph { rankdir=LR; bgcolor='transparent'; node [style=filled, fillcolor='#1f2937', color='#3b82f6', fontcolor='#ffffff', shape=box, fontname='Arial', fontsize=12]; edge [color='#8b949e', penwidth=2]; "
     for nid, cfg in st.session_state.nodes_config.items():
         dot += f'{nid} [label="{cfg["name"]}\\n({"/".join(cfg["states"])})"]; '
     for s, t in st.session_state.edges:
         dot += f"{s} -> {t}; "
     dot += "}"
+    # Zeichnet das Diagramm
     st.graphviz_chart(dot)
 
 
