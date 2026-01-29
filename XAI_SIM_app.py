@@ -4,13 +4,7 @@ import numpy as np
 
 st.set_page_config(page_title="Bayes-Netz Simulator", layout="wide")
 
-st.title("🎓 Bayes-Netzwerk Simulator für Schulungen")
-st.markdown("""
-Dieses Tool visualisiert, wie **bedingte Wahrscheinlichkeitstabellen (CPTs)** aus Daten gelernt werden.
-1. Definiere die Struktur (wer ist Elternteil von wem?).
-2. Gib Trainingsdaten im One-Hot-Format ein (0 oder 1).
-3. Beobachte, wie sich die CPTs berechnen.
-""")
+st.title("🎓 Bayes-Netzwerk Simulator für KI-Schulungen")
 
 # --- SEITENLEISTE: Struktur-Definition ---
 st.sidebar.header("1. Netzwerk-Struktur")
@@ -25,52 +19,79 @@ for node in nodes:
     )
     structure[node] = parents
 
-# --- HAUPTBEREICH: Dateneingabe ---
-st.header("2. Trainingsdaten (One-Hot Encoding)")
-st.info("Gib hier 0 oder 1 für jeden Zustand ein. Jede Zeile repräsentiert eine Beobachtung.")
+# --- VISUALISIERUNG ---
+st.header("Netzwerk-Struktur")
+dot = "digraph { rankdir=LR; node [style=filled, fillcolor=lightblue]; "
+for node, parents in structure.items():
+    dot += f"{node}; "
+    for p in parents:
+        dot += f"{p} -> {node}; "
+dot += "}"
+st.graphviz_chart(dot)
 
-# Initialdaten
+
+
+# --- DATENEINGABE ---
+st.header("Trainingsdaten (One-Hot)")
+st.info("Bearbeite die Tabelle, um die Wahrscheinlichkeiten live zu verändern.")
+
 default_data = pd.DataFrame(
-    [[1, 0, 1, 0], [1, 1, 0, 0], [0, 0, 1, 1], [1, 0, 1, 1]], 
+    [[1, 1, 0, 0], [1, 1, 1, 0], [0, 0, 1, 1], [1, 0, 1, 0], [0, 1, 0, 1]], 
     columns=nodes
 )
-
 edited_df = st.data_editor(default_data, num_rows="dynamic", use_container_width=True)
 
-# --- BERECHNUNG DER CPTs ---
-st.header("3. Bedingte Wahrscheinlichkeitstabellen (CPTs)")
+# --- CPT BERECHNUNG ---
+st.header("Bedingte Wahrscheinlichkeitstabellen (CPTs)")
+
+cpts = {} # Speicher für die berechneten Tabellen
 
 def calculate_cpt(df, target, parents):
     if not parents:
-        # Prior Wahrscheinlichkeit (keine Eltern)
         prob = df[target].mean()
-        return pd.DataFrame({f"P({target}=1)": [prob], f"P({target}=0)": [1-prob]})
+        res = pd.DataFrame({0: [1-prob], 1: [prob]}, index=["Prior"])
+    else:
+        res = df.groupby(parents)[target].value_counts(normalize=True).unstack(fill_value=0)
+        if 0 not in res.columns: res[0] = 0.0
+        if 1 not in res.columns: res[1] = 0.0
     
-    # Gruppieren nach Eltern-Zuständen
-    counts = df.groupby(parents)[target].value_counts(normalize=True).unstack(fill_value=0)
-    
-    # Sicherstellen, dass beide Spalten (0 und 1) existieren
-    if 1 not in counts.columns: counts[1] = 0.0
-    if 0 not in counts.columns: counts[0] = 0.0
-    
-    counts = counts.rename(columns={1: f"P({target}=1)", 0: f"P({target}=0)"})
-    return counts
+    res.columns = [f"{target}=0", f"{target}=1"]
+    return res
 
 cols = st.columns(2)
 for i, node in enumerate(nodes):
     with cols[i % 2]:
-        st.subheader(f"CPT für {node}")
-        if structure[node]:
-            st.write(f"Abhängig von: {', '.join(structure[node])}")
-        else:
-            st.write("Unabhängiger Wurzelknoten")
-            
+        st.subheader(f"Tabelle für {node}")
         try:
             cpt_df = calculate_cpt(edited_df, node, structure[node])
+            cpts[node] = cpt_df
             st.dataframe(cpt_df.style.format("{:.2%}"))
-        except Exception as e:
-            st.warning(f"Nicht genügend Datenkombinationen für {node}")
+        except Exception:
+            st.warning(f"Keine Daten für Kombinationen in {node}")
 
-# --- LOGIK-CHECK ---
+# --- INFERENZ (WAS-WÄRE-WENN) ---
 st.divider()
-st.sidebar.success("💡 **Tipp für die Schulung:** Ändere einen Wert in der Tabelle oben auf 0 und beobachte, wie die Wahrscheinlichkeiten in den CPTs sofort "live" neu berechnet werden.")
+st.header("Inferenz: Auswirkungen beobachten")
+st.markdown("Setze hier eine Bedingung fest (Evidenz), um zu sehen, wie sie die Vorhersage beeinflusst.")
+
+inf_cols = st.columns(len(nodes))
+evidence = {}
+for i, node in enumerate(nodes):
+    with inf_cols[i]:
+        choice = st.selectbox(f"Zustand {node}", ["Unbekannt", "0", "1"], key=f"inf_{node}")
+        if choice != "Unbekannt":
+            evidence[node] = int(choice)
+
+if st.button("Berechne Wahrscheinlichkeit für gewählte Evidenz"):
+    # Vereinfachte Darstellung: Wir filtern die Tabelle nach der Evidenz
+    query_df = edited_df.copy()
+    for node, val in evidence.items():
+        query_df = query_df[query_df[node] == val]
+    
+    if query_df.empty:
+        st.error("Diese Kombination kommt in den Trainingsdaten nicht vor!")
+    else:
+        st.success("Wahrscheinlichkeiten basierend auf aktueller Evidenz:")
+        st.dataframe(query_df.mean().to_frame("Wahrscheinlichkeit (Zustand=1)").style.format("{:.2%}"))
+
+st.sidebar.success('💡 **Tipp:** Ändere die Eltern-Beziehungen links, um zu sehen, wie die Tabellen unten komplexer werden (Kombinatorik!).')
