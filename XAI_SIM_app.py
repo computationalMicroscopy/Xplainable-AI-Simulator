@@ -76,10 +76,7 @@ with st.sidebar:
 
 # --- 2. TRAININGSDATEN ---
 st.header("2. Trainingsdaten (Soft-Data / Wahrscheinlichkeiten)")
-st.markdown("""
-Gib entweder **0/1** (klassisch) oder **Wahrscheinlichkeiten** (z.B. 0.7) ein. 
-Das Modell nutzt diese Werte als gewichtete Evidenz für das Lernen der CPTs.
-""")
+st.markdown("Gib Werte zwischen 0 und 1 ein. Diese werden als Gewichte für das Lernen der CPTs verwendet.")
 
 current_cols = get_one_hot_columns()
 if list(st.session_state.training_data.columns) != current_cols:
@@ -98,15 +95,11 @@ for s, t in st.session_state.edges:
 dot += "}"
 st.graphviz_chart(dot)
 
-
-
 # --- 3. TRAINING & CPTs ---
 st.header("3. Wahrscheinlichkeitstabellen (CPTs)")
 
 if st.button("🎯 Aus Soft-Data lernen"):
     new_cpts = {}
-    
-    # Vorbereitung: Falls Zeilen unvollständig befüllt sind, mit 0 auffüllen
     learning_df = trained_df.fillna(0).apply(pd.to_numeric, errors='coerce').fillna(0)
 
     for n in ["A", "B", "C", "D"]:
@@ -116,36 +109,30 @@ if st.button("🎯 Aus Soft-Data lernen"):
         
         if not parents:
             if len(learning_df) > 0:
-                # Summiere die Gewichte aller Zeilen für diesen Knoten
                 weights = learning_df[n_cols].sum()
                 if weights.sum() > 0:
-                    vals = (weights / weights.sum() * 100).tolist()
+                    vals = (weights / weights.sum() * 100).values
                 else:
-                    vals = [100/len(states)] * len(states)
-                new_cpts[n] = pd.DataFrame([vals], columns=states, index=["Basis (%)"])
+                    vals = np.full(len(states), 100.0 / len(states))
             else:
-                new_cpts[n] = pd.DataFrame([[100/len(states)]*len(states)], columns=states, index=["Basis (%)"])
+                vals = np.full(len(states), 100.0 / len(states))
+            new_cpts[n] = pd.DataFrame([vals], columns=states, index=["Basis (%)"])
         else:
             p_states_list = [st.session_state.nodes_config[p]["states"] for p in parents]
             combinations = list(itertools.product(*p_states_list))
             row_labels = [" | ".join(map(str, combo)) for combo in combinations]
             
-            df_cpt = pd.DataFrame(np.full((len(row_labels), len(states)), 100/len(states)), index=row_labels, columns=states)
+            df_cpt = pd.DataFrame(np.full((len(row_labels), len(states)), 100.0 / len(states)), index=row_labels, columns=states)
             
             if len(learning_df) > 0:
                 for i, combo in enumerate(combinations):
-                    # Berechne das kombinierte Gewicht der Eltern-Konfiguration pro Zeile
-                    # (Produkt der Wahrscheinlichkeiten der gewählten Eltern-Zustände)
                     parent_weight = pd.Series(1.0, index=learning_df.index)
                     for p_idx, p_id in enumerate(parents):
-                        state_val = combo[p_idx]
-                        parent_weight *= learning_df[f"{p_id}_{state_val}"]
+                        parent_weight *= learning_df[f"{p_id}_{combo[p_idx]}"]
                     
                     if parent_weight.sum() > 0:
-                        # Berechne gewichtete Verteilung für den Kind-Knoten unter dieser Eltern-Kombi
-                        for s_idx, s_name in enumerate(states):
-                            child_col = f"{n}_{s_name}"
-                            weighted_sum = (learning_df[child_col] * parent_weight).sum()
+                        for s_name in states:
+                            weighted_sum = (learning_df[f"{n}_{s_name}"] * parent_weight).sum()
                             df_cpt.loc[row_labels[i], s_name] = (weighted_sum / parent_weight.sum()) * 100
             new_cpts[n] = df_cpt
             
@@ -161,13 +148,13 @@ for n in ["A", "B", "C", "D"]:
     row_labels = [" | ".join(map(str, combo)) for combo in p_combs] if parents else ["Basis (%)"]
     
     if n not in st.session_state.cpt_values or len(st.session_state.cpt_values[n]) != len(row_labels):
-        init_data = np.full((len(row_labels), len(cfg["states"])), 100/len(cfg["states"]))
+        init_data = np.full((len(row_labels), len(cfg["states"])), 100.0 / len(cfg["states"]))
         st.session_state.cpt_values[n] = pd.DataFrame(init_data, index=row_labels, columns=cfg["states"])
 
     st.write(f"### CPT: {cfg['name']}")
     edited_cpt = st.data_editor(st.session_state.cpt_values[n], key=f"editor_{n}")
     
-    norm = edited_cpt.div(edited_cpt.sum(axis=1), axis=0).fillna(1/len(cfg["states"]))
+    norm = edited_cpt.div(edited_cpt.sum(axis=1), axis=0).fillna(1.0 / len(cfg["states"]))
     if not parents:
         cpt_storage_for_sim[n] = norm.iloc[0].to_dict()
     else:
@@ -233,4 +220,4 @@ if st.button("🚀 Wahrscheinlichkeit berechnen"):
                 dist = df_res[n].value_counts(normalize=True).sort_index()
                 st.bar_chart(dist)
     else:
-        st.error("Bedingung ist zu unwahrscheinlich für das Sampling.")
+        st.error("Bedingung ist zu unwahrscheinlich.")
