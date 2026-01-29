@@ -89,7 +89,7 @@ if 'cpt_values' not in st.session_state:
     st.session_state.cpt_values = {}
 
 # --- HEADER ---
-st.title("🛡️ Bayes Expert Pro | Enterprise Edition")
+st.title("Probabilistische künstliche Intelligenz")
 
 # --- 1. STRUKTUR-EDITOR (SIDEBAR) ---
 with st.sidebar:
