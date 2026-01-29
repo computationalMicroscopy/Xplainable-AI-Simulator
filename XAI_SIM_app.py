@@ -23,7 +23,7 @@ if 'training_data' not in st.session_state:
 if 'cpt_values' not in st.session_state:
     st.session_state.cpt_values = {}
 
-st.title("🎓 Bayes-Netz: Training & Komplexe bedingte Inferenz")
+st.title("🎓 Bayes-Netz: Training & Spezifische bedingte Inferenz")
 
 # --- 1. STRUKTUR-EDITOR (SIDEBAR) ---
 with st.sidebar:
@@ -56,8 +56,6 @@ for s, t in st.session_state.edges:
     dot += f"{s} -> {t}; "
 dot += "}"
 st.graphviz_chart(dot)
-
-
 
 # --- 3. TRAININGSKNOPF & CPT BERECHNUNG ---
 st.header("3. Bedingte Wahrscheinlichkeitstabellen (CPTs)")
@@ -119,10 +117,10 @@ for n in st.session_state.nodes_config.keys():
             "lookup": {p_combs[i]: normalized.iloc[i].to_dict() for i in range(len(p_combs))}
         }
 
-# --- 4. KOMPLEXE INFERENZ ---
+# --- 4. SPEZIFISCHE BEDINGTE INFERENZ ---
 st.divider()
-st.header("4. Inferenz: Beliebige bedingte Abfragen")
-st.markdown("Berechne $P(Ziel | Bedingung)$. Wähle Variablen aus, deren gemeinsame Verteilung dich interessiert.")
+st.header("4. Inferenz: Gezielte Wahrscheinlichkeitsabfrage")
+st.markdown("Definiere Bedingungen (Evidenz) und die Ziel-Ausprägungen, um einen konkreten Ausdruck zu berechnen.")
 
 col_ev, col_target = st.columns(2)
 
@@ -136,14 +134,17 @@ with col_ev:
             evidence[n] = sel
 
 with col_target:
-    st.subheader("Zielvariablen (Joint Query)")
-    query_nodes = st.multiselect("Wahrscheinlichkeit für Kombination von:", 
-                                 [n for n in st.session_state.nodes_config.keys() if n not in evidence],
-                                 default=[n for n in st.session_state.nodes_config.keys() if n not in evidence][:1])
+    st.subheader("Zielvariablen & Ausprägungen")
+    target_selection = {}
+    avail_nodes = [n for n in st.session_state.nodes_config.keys() if n not in evidence]
+    query_nodes = st.multiselect("Zielknoten wählen:", avail_nodes, default=avail_nodes[:1] if avail_nodes else [])
+    
+    for qn in query_nodes:
+        target_selection[qn] = st.selectbox(f"Wert für {qn}", st.session_state.nodes_config[qn], key=f"target_val_{qn}")
 
 num_samples = st.slider("Samples", 1000, 20000, 5000)
 
-if st.button("🚀 Inferenz berechnen"):
+if st.button("🚀 Wahrscheinlichkeit berechnen"):
     all_nodes = list(st.session_state.nodes_config.keys())
     valid_samples = []
     attempts = 0
@@ -167,17 +168,32 @@ if st.button("🚀 Inferenz berechnen"):
         
     if valid_samples:
         df_res = pd.DataFrame(valid_samples)
-        st.success(f"Erfolg: {len(valid_samples)} Samples nach {attempts} Versuchen.")
         
-        if query_nodes:
-            st.subheader(f"Gemeinsame Wahrscheinlichkeit P({', '.join(query_nodes)} | Evidenz)")
-            joint = df_res.groupby(query_nodes).size() / len(df_res)
-            st.table(joint.to_frame("Wahrscheinlichkeit").style.format("{:.2%}"))
+        # Mathematischen Ausdruck bauen
+        target_str = ", ".join([f"{k}={v}" for k, v in target_selection.items()])
+        ev_str = ", ".join([f"{k}={v}" for k, v in evidence.items()])
+        full_expr = f"P({target_str} | {ev_str if ev_str else '∅'})"
+        
+        # Wahrscheinlichkeit berechnen
+        if target_selection:
+            mask = True
+            for k, v in target_selection.items():
+                mask &= (df_res[k] == v)
+            prob_value = mask.mean()
             
-            for qn in query_nodes:
-                st.write(f"**Einzel-Marginal P({qn} | Evidenz)**")
-                st.bar_chart(df_res[qn].value_counts(normalize=True))
+            st.metric(label="Berechneter Ausdruck", value=full_expr)
+            st.info(f"Ergebnis: **{prob_value:.2%}** (basierend auf {len(valid_samples)} validen Samples)")
+        
+        # Visualisierungen beibehalten
+        st.divider()
+        st.subheader("Einzel-Verteilungen unter der Bedingung")
+        res_cols = st.columns(len(all_nodes))
+        for i, n in enumerate(all_nodes):
+            with res_cols[i]:
+                st.write(f"**P({n} | Evidenz)**")
+                dist = df_res[n].value_counts(normalize=True).sort_index()
+                st.bar_chart(dist)
     else:
-        st.error("Evidenz zu unwahrscheinlich für Rejection Sampling.")
+        st.error("Evidenz zu unwahrscheinlich für das aktuelle Sampling-Limit.")
 
-st.sidebar.info("Schulungs-Tipp: Nutze die 'Joint Query' um zu zeigen, dass $P(A,B|E)$ nicht einfach $P(A|E) \cdot P(B|E)$ sein muss (Abhängigkeiten!).")
+st.sidebar.info("Schulungs-Tipp: Vergleiche den manuell berechneten Ausdruck mit den Balkendiagrammen, um die Konsistenz zu prüfen.")
