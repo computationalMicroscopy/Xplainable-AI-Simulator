@@ -34,7 +34,7 @@ if 'training_data' not in st.session_state:
 if 'cpt_values' not in st.session_state:
     st.session_state.cpt_values = {}
 
-st.title("🎓 Bayes-Netz: Multi-State One-Hot Training & Inferenz")
+st.title("🎓 Bayes-Netz: Soft-Data Training & Inferenz")
 
 # --- 1. STRUKTUR-EDITOR (SIDEBAR) ---
 with st.sidebar:
@@ -75,8 +75,11 @@ with st.sidebar:
         st.rerun()
 
 # --- 2. TRAININGSDATEN ---
-st.header("2. Trainingsdaten (One-Hot)")
-st.markdown("Pro Knoten darf in jeder Zeile nur bei **einer** Ausprägung eine 1 stehen.")
+st.header("2. Trainingsdaten (Soft-Data / Wahrscheinlichkeiten)")
+st.markdown("""
+Gib entweder **0/1** (klassisch) oder **Wahrscheinlichkeiten** (z.B. 0.7) ein. 
+Das Modell nutzt diese Werte als gewichtete Evidenz für das Lernen der CPTs.
+""")
 
 current_cols = get_one_hot_columns()
 if list(st.session_state.training_data.columns) != current_cols:
@@ -100,24 +103,25 @@ st.graphviz_chart(dot)
 # --- 3. TRAINING & CPTs ---
 st.header("3. Wahrscheinlichkeitstabellen (CPTs)")
 
-def get_category_series(df, nid):
-    states = st.session_state.nodes_config[nid]["states"]
-    cols = [f"{nid}_{s}" for s in states]
-    if df[cols].sum(axis=1).all():
-        return df[cols].idxmax(axis=1).str.replace(f"{nid}_", "", regex=False)
-    return pd.Series([None] * len(df))
-
-if st.button("🎯 Aus One-Hot Daten lernen"):
+if st.button("🎯 Aus Soft-Data lernen"):
     new_cpts = {}
+    
+    # Vorbereitung: Falls Zeilen unvollständig befüllt sind, mit 0 auffüllen
+    learning_df = trained_df.fillna(0).apply(pd.to_numeric, errors='coerce').fillna(0)
+
     for n in ["A", "B", "C", "D"]:
         parents = [s for s, t in st.session_state.edges if t == n]
         states = st.session_state.nodes_config[n]["states"]
+        n_cols = [f"{n}_{s}" for s in states]
         
         if not parents:
-            if len(trained_df) > 0:
-                cat_series = get_category_series(trained_df, n)
-                counts = cat_series.value_counts(normalize=True).to_dict()
-                vals = [counts.get(s, 1/len(states)) * 100 for s in states]
+            if len(learning_df) > 0:
+                # Summiere die Gewichte aller Zeilen für diesen Knoten
+                weights = learning_df[n_cols].sum()
+                if weights.sum() > 0:
+                    vals = (weights / weights.sum() * 100).tolist()
+                else:
+                    vals = [100/len(states)] * len(states)
                 new_cpts[n] = pd.DataFrame([vals], columns=states, index=["Basis (%)"])
             else:
                 new_cpts[n] = pd.DataFrame([[100/len(states)]*len(states)], columns=states, index=["Basis (%)"])
@@ -128,22 +132,23 @@ if st.button("🎯 Aus One-Hot Daten lernen"):
             
             df_cpt = pd.DataFrame(np.full((len(row_labels), len(states)), 100/len(states)), index=row_labels, columns=states)
             
-            if len(trained_df) > 0:
-                calc_df = pd.DataFrame()
-                calc_df[n] = get_category_series(trained_df, n)
-                for p in parents:
-                    calc_df[p] = get_category_series(trained_df, p)
-                
+            if len(learning_df) > 0:
                 for i, combo in enumerate(combinations):
-                    subset = calc_df
-                    for p_idx, p_name in enumerate(parents):
-                        subset = subset[subset[p_name] == combo[p_idx]]
+                    # Berechne das kombinierte Gewicht der Eltern-Konfiguration pro Zeile
+                    # (Produkt der Wahrscheinlichkeiten der gewählten Eltern-Zustände)
+                    parent_weight = pd.Series(1.0, index=learning_df.index)
+                    for p_idx, p_id in enumerate(parents):
+                        state_val = combo[p_idx]
+                        parent_weight *= learning_df[f"{p_id}_{state_val}"]
                     
-                    if len(subset) > 0:
-                        dist = subset[n].value_counts(normalize=True).to_dict()
-                        for s_name in states:
-                            df_cpt.loc[row_labels[i], s_name] = dist.get(s_name, 0.0) * 100
+                    if parent_weight.sum() > 0:
+                        # Berechne gewichtete Verteilung für den Kind-Knoten unter dieser Eltern-Kombi
+                        for s_idx, s_name in enumerate(states):
+                            child_col = f"{n}_{s_name}"
+                            weighted_sum = (learning_df[child_col] * parent_weight).sum()
+                            df_cpt.loc[row_labels[i], s_name] = (weighted_sum / parent_weight.sum()) * 100
             new_cpts[n] = df_cpt
+            
     st.session_state.cpt_values = new_cpts
     st.rerun()
 
