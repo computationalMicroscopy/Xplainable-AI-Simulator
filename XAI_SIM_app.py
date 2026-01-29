@@ -4,7 +4,7 @@ import numpy as np
 import itertools
 
 # --- SEITENKONFIGURATION ---
-st.set_page_config(page_title="Bayes Expert Pro | Enterprise Edition", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Probabilistische künstliche Intelligenz", layout="wide", initial_sidebar_state="expanded")
 
 # --- HIGH-CONTRAST PROFESSIONAL DESIGN (DARK MODE OPTIMIZED) ---
 st.markdown("""
