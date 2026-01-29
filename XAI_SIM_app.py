@@ -3,9 +3,9 @@ import pandas as pd
 import numpy as np
 import itertools
 
-st.set_page_config(page_title="Bayes-Expert-Simulator", layout="wide")
+st.set_page_config(page_title="Bayes-Schulungs-Simulator", layout="wide")
 
-# --- SESSION STATE INITIALISIERUNG ---
+# --- INITIALISIERUNG ---
 if 'nodes_config' not in st.session_state:
     st.session_state.nodes_config = {
         "A": ["Kalt", "Warm"],
@@ -15,123 +15,128 @@ if 'nodes_config' not in st.session_state:
     }
 if 'edges' not in st.session_state:
     st.session_state.edges = []
+if 'training_data' not in st.session_state:
+    # Start-Daten mit 0 und 1 für One-Hot Logik
+    st.session_state.training_data = pd.DataFrame(
+        [[1, 1, 0, 0], [1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 1], [1, 1, 1, 1]], 
+        columns=["A", "B", "C", "D"]
+    )
 
-st.title("🧠 Bayes-Netzwerk Experte & Simulator")
+st.title("🎓 Bayes-Netz: Training & Simulation")
 
-# --- 1. KNOTEN & STRUKTUR ---
+# --- 1. STRUKTUR-EDITOR (SIDEBAR) ---
 with st.sidebar:
-    st.header("1. Konfiguration")
-    
-    st.subheader("Zustände bearbeiten")
+    st.header("1. Netzwerk-Design")
     for n in list(st.session_state.nodes_config.keys()):
-        states_str = st.text_input(f"Zustände für {n}", 
-                                   value=",".join(st.session_state.nodes_config[n]),
-                                   key=f"input_{n}")
-        st.session_state.nodes_config[n] = [s.strip() for s in states_str.split(",")]
+        states = st.text_input(f"Zustände {n}", ",".join(st.session_state.nodes_config[n]), key=f"s_{n}")
+        st.session_state.nodes_config[n] = [s.strip() for s in states.split(",")]
 
-    st.subheader("Struktur")
-    src = st.selectbox("Ursache", list(st.session_state.nodes_config.keys()))
-    tgt = st.selectbox("Wirkung", [n for n in st.session_state.nodes_config.keys() if n != src])
+    src = st.selectbox("Ursache (Eltern)", list(st.session_state.nodes_config.keys()))
+    tgt = st.selectbox("Wirkung (Kind)", [n for n in st.session_state.nodes_config.keys() if n != src])
     if st.button("Verbindung hinzufügen ➕"):
         if (src, tgt) not in st.session_state.edges:
             st.session_state.edges.append((src, tgt))
-    if st.button("Kanten löschen 🗑️"):
+    if st.button("Struktur zurücksetzen 🗑️"):
         st.session_state.edges = []
         st.rerun()
 
-# --- 2. GRAPH-VISUALISIERUNG ---
-st.header("Netzwerk-Graph")
-dot = "digraph { rankdir=LR; node [style=filled, fillcolor='#E1F5FE', shape=box, fontname='Arial']; "
-for n, states in st.session_state.nodes_config.items():
-    dot += f'{n} [label="{n}\\n({"/".join(states)})"]; '
+# --- 2. TRAININGSDATEN (ONE-HOT) ---
+st.header("2. Training aus Daten")
+st.markdown("Gib hier Beobachtungen ein (0 = erster Zustand, 1 = zweiter Zustand etc.).")
+trained_df = st.data_editor(st.session_state.training_data, num_rows="dynamic", use_container_width=True)
+
+# Graph zur Visualisierung
+dot = "digraph { rankdir=LR; node [style=filled, fillcolor='#E1F5FE', shape=box]; "
+for n in st.session_state.nodes_config:
+    dot += f'{n}; '
 for s, t in st.session_state.edges:
     dot += f"{s} -> {t}; "
 dot += "}"
 st.graphviz_chart(dot)
 
-# --- 3. DIE CPTs ---
-st.header("2. Bedingte Wahrscheinlichkeitstabellen (CPTs)")
-st.info("Trage Wahrscheinlichkeiten ein (Werte werden pro Zeile automatisch auf 100% normalisiert).")
 
-cpt_data = {}
+# --- 3. CPT BERECHNUNG (TRAINING) ---
+st.header("3. Bedingte Wahrscheinlichkeitstabellen (CPTs)")
+st.info("Diese Tabellen wurden aus den obigen Daten gelernt. Du kannst sie manuell überschreiben.")
+
+cpt_storage = {}
 
 for n in st.session_state.nodes_config.keys():
     parents = [s for s, t in st.session_state.edges if t == n]
-    st.write(f"### Tabelle für Knoten: {n}")
-    
     states = st.session_state.nodes_config[n]
     
+    # Training: Häufigkeiten zählen
     if not parents:
-        # Wurzelknoten: Einfache Zeile
-        df_prior = pd.DataFrame([[100/len(states)] * len(states)], columns=states, index=["Basiswahrscheinlichkeit (%)"])
-        edited = st.data_editor(df_prior, key=f"editor_{n}")
-        # Normalisierung
-        row_sum = edited.iloc[0].sum()
-        cpt_data[n] = (edited.iloc[0] / row_sum).to_dict() if row_sum > 0 else {s: 1/len(states) for s in states}
+        # Prior lernen
+        counts = trained_df[n].value_counts(normalize=True).to_dict()
+        # Mapping von Index (0,1..) auf Namen (Kalt, Warm..)
+        init_values = [counts.get(i, 1/len(states)) * 100 for i in range(len(states))]
+        df_cpt = pd.DataFrame([init_values], columns=states, index=["Wahrscheinlichkeit (%)"])
     else:
-        # Bedingte Tabelle: MultiIndex fixen durch String-Kombination
+        # Bedingt lernen
         parent_states = [st.session_state.nodes_config[p] for p in parents]
         combinations = list(itertools.product(*parent_states))
+        comb_indices = list(itertools.product(*[range(len(st.session_state.nodes_config[p])) for p in parents]))
         
-        # Erzeuge lesbare Zeilenbeschriftungen: "Zustand_P1, Zustand_P2"
         row_labels = [" | ".join(map(str, combo)) for combo in combinations]
+        df_cpt = pd.DataFrame(0.0, index=row_labels, columns=states)
         
-        df_cond = pd.DataFrame(
-            100/len(states), 
-            index=row_labels,
-            columns=states
-        )
-        df_cond.index.name = "Eltern-Zustände (" + " & ".join(parents) + ")"
-        
-        edited = st.data_editor(df_cond, key=f"editor_{n}")
-        
-        # Zurück-Mapping für das Sampling
-        normalized_df = edited.div(edited.sum(axis=1), axis=0).fillna(1/len(states))
-        # Wir speichern das Mapping von der Kombinations-Tuple zur Wahrscheinlichkeitsverteilung
-        cpt_dict = {}
-        for i, combo in enumerate(combinations):
-            cpt_dict[combo] = normalized_df.iloc[i].to_dict()
-        cpt_data[n] = {"type": "conditional", "parents": parents, "lookup": cpt_dict}
+        # MLE Training aus dem DataFrame
+        for i, (comb_idx, label) in enumerate(zip(comb_indices, row_labels)):
+            subset = trained_df
+            for p_idx, p_name in enumerate(parents):
+                subset = subset[subset[p_name] == comb_idx[p_idx]]
+            
+            if len(subset) > 0:
+                dist = subset[n].value_counts(normalize=True).to_dict()
+                for s_idx, s_name in enumerate(states):
+                    df_cpt.loc[label, s_name] = dist.get(s_idx, 0.0) * 100
+            else:
+                df_cpt.iloc[i] = 100 / len(states) # Laplace Smoothing / Uniform bei fehlenden Daten
+
+    # Manueller Editor für die CPT
+    edited_cpt = st.data_editor(df_cpt, key=f"ed_{n}")
+    
+    # Normalisierte Daten für Simulation speichern
+    normalized = edited_cpt.div(edited_cpt.sum(axis=1), axis=0).fillna(1/len(states))
+    if not parents:
+        cpt_storage[n] = normalized.iloc[0].to_dict()
+    else:
+        cpt_storage[n] = {"parents": parents, "lookup": {comb: normalized.iloc[i].to_dict() for i, comb in enumerate(combinations)}}
 
 # --- 4. FORWARD SAMPLING ---
 st.divider()
-st.header("3. Inferenz via Forward Sampling")
-num_samples = st.slider("Samples", 100, 5000, 1000)
+st.header("4. Inferenz (Simulation)")
+num_samples = st.slider("Samples ziehen", 100, 5000, 1000)
 
-if st.button("🚀 Simulation starten"):
-    results = []
-    
-    # Topologische Sortierung (simpel für kleine Graphen)
+if st.button("🚀 Forward Sampling starten"):
     all_nodes = list(st.session_state.nodes_config.keys())
+    final_samples = []
     
     for _ in range(num_samples):
-        sample = {}
-        remaining = all_nodes.copy()
-        
-        while remaining:
-            for n in remaining:
+        current_sample = {}
+        to_process = all_nodes.copy()
+        while to_process:
+            for n in to_process:
                 parents = [s for s, t in st.session_state.edges if t == n]
-                if all(p in sample for p in parents):
+                if all(p in current_sample for p in parents):
                     states = st.session_state.nodes_config[n]
-                    
                     if not parents:
-                        probs_dict = cpt_data[n]
+                        probs = [cpt_storage[n][s] for s in states]
                     else:
-                        p_vals = tuple(sample[p] for p in parents)
-                        probs_dict = cpt_data[n]["lookup"][p_vals]
+                        p_vals = tuple(current_sample[p] for p in parents)
+                        probs = [cpt_storage[n]["lookup"][p_vals][s] for s in states]
                     
-                    p_list = [probs_dict[s] for s in states]
-                    sample[n] = np.random.choice(states, p=p_list)
-                    remaining.remove(n)
+                    current_sample[n] = np.random.choice(states, p=probs)
+                    to_process.remove(n)
                     break
-        results.append(sample)
+        final_samples.append(current_sample)
     
-    res_df = pd.DataFrame(results)
-    
-    # Visualisierung der Ergebnisse
+    res_df = pd.DataFrame(final_samples)
     cols = st.columns(len(all_nodes))
     for i, n in enumerate(all_nodes):
         with cols[i]:
-            st.write(f"**Ergebnis {n}**")
-            counts = res_df[n].value_counts(normalize=True)
-            st.bar_chart(counts)
+            st.write(f"**Verteilung {n}**")
+            st.bar_chart(res_df[n].value_counts(normalize=True))
+
+st.sidebar.info("Schulungs-Tipp: Ändere die 0/1 Werte in der Trainingsdaten-Tabelle und beobachte, wie 'Training' die CPTs unten sofort beeinflusst!")
